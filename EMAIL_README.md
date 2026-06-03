@@ -1,4 +1,6 @@
 # 📧 AI-Powered Email Classification Workflow
+![n8n](https://github.com/heskeyman/email-classification-workflow/blob/main/email%20classsification%202.JPG?raw=true)
+
 
 > Automatically classifies incoming emails into business departments and routes them to the right team — built with n8n, Groq AI (Llama 3.1), and rule-based keyword scoring.
 
@@ -12,6 +14,7 @@
 ## 🎯 What It Does
 
 This workflow monitors a Gmail inbox and automatically:
+![n8n](https://github.com/heskeyman/email-classification-workflow/blob/main/email%20classification.JPG?raw=true)
 
 1. **Receives** incoming emails in real-time
 2. **Analyzes** the sender, subject, and body content
