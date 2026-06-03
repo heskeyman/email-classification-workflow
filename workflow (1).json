@@ -1,0 +1,666 @@
+{
+  "name": "Email Classification - FINAL v2",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "readStatus": "unread"
+        },
+        "format": "resolved"
+      },
+      "id": "n1",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        340
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "var item = $input.item.json;\n\n// Gmail Trigger can use UPPERCASE or lowercase field names\n// Check both formats\n\n// --- SENDER ---\nvar sender = \"unknown\";\nvar senderName = \"\";\n\nif (item.From) {\n  var fromStr = item.From;\n  var emailMatch = fromStr.match(/<([^>]+)>/);\n  if (emailMatch) {\n    sender = emailMatch[1];\n  } else {\n    sender = fromStr;\n  }\n  var nameMatch = fromStr.match(/^([^<]+)</);\n  if (nameMatch) {\n    senderName = nameMatch[1].trim();\n  }\n} else if (item.from && typeof item.from === \"object\" && item.from.value && item.from.value[0]) {\n  sender = item.from.value[0].address || \"unknown\";\n  senderName = item.from.value[0].name || \"\";\n} else if (item.from && typeof item.from === \"string\") {\n  sender = item.from;\n}\n\n// --- SUBJECT ---\nvar subject = item.Subject || item.subject || \"(no subject)\";\n\n// --- BODY ---\nvar body = \"\";\n\nif (item.textPlain) {\n  body = item.textPlain;\n} else if (item.text) {\n  body = item.text;\n} else if (item.snippet) {\n  body = item.snippet;\n} else if (item.textHtml) {\n  var html = item.textHtml;\n  html = html.replace(/<[^>]+>/g, \" \");\n  html = html.replace(/&nbsp;/g, \" \");\n  html = html.replace(/&amp;/g, \"&\");\n  html = html.replace(/&lt;/g, \"<\");\n  html = html.replace(/&gt;/g, \">\");\n  html = html.replace(/&#39;/g, \"'\");\n  body = html.replace(/\\s+/g, \" \").trim();\n}\n\nif (body.length > 3000) {\n  body = body.substring(0, 3000);\n}\n\n// --- SKIP BOUNCE EMAILS ---\nvar senderLower = sender.toLowerCase();\nvar subjectLower = subject.toLowerCase();\n\nvar isBounce = false;\nif (senderLower.indexOf(\"mailer-daemon\") !== -1) { isBounce = true; }\nif (senderLower.indexOf(\"postmaster\") !== -1) { isBounce = true; }\nif (subjectLower.indexOf(\"delivery status\") !== -1) { isBounce = true; }\nif (subjectLower.indexOf(\"undeliverable\") !== -1) { isBounce = true; }\nif (subjectLower.indexOf(\"delivery failed\") !== -1) { isBounce = true; }\nif (subjectLower.indexOf(\"returned mail\") !== -1) { isBounce = true; }\n\nvar messageId = item.id || \"\";\nvar threadId = item.threadId || \"\";\n\nreturn {\n  json: {\n    skipEmail: isBounce,\n    messageId: messageId,\n    threadId: threadId,\n    sender: sender.toLowerCase(),\n    senderName: senderName,\n    subject: subject,\n    body: body,\n    fullText: (subject + \" \" + body).toLowerCase(),\n    receivedAt: new Date().toISOString()\n  }\n};\n"
+      },
+      "id": "n2",
+      "name": "Clean Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "skip1",
+              "leftValue": "={{ $json.skipEmail }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "n3",
+      "name": "Is Bounce?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        340
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "n3b",
+      "name": "Skip Bounce",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        780,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "var item = $input.item.json;\nvar fullText = item.fullText;\nvar sender = item.sender;\nvar subject = item.subject.toLowerCase();\n\nvar salesKw = [\"buy\",\"purchase\",\"order\",\"pricing\",\"price\",\"quote\",\"quotation\",\n  \"discount\",\"deal\",\"offer\",\"proposal\",\"contract\",\"subscription\",\n  \"upgrade\",\"demo\",\"trial\",\"wholesale\",\"retail\",\"partnership\",\n  \"promotion\",\"catalog\",\"negotiate\",\"bid\"];\nvar salesSender = [\"sales@\",\"partner@\",\"vendor@\",\"business@\"];\nvar salesSubject = [\"order\",\"quote\",\"pricing\",\"proposal\",\"deal\",\"purchase\"];\n\nvar csKw = [\"complaint\",\"issue\",\"problem\",\"broken\",\"defective\",\"return\",\n  \"refund\",\"exchange\",\"help\",\"support\",\"damaged\",\"warranty\",\n  \"feedback\",\"disappointed\",\"unhappy\",\"frustrated\",\"resolve\",\n  \"escalate\",\"ticket\",\"tracking\",\"assistance\"];\nvar csSender = [\"support@\",\"help@\",\"customer@\",\"service@\"];\nvar csSubject = [\"complaint\",\"issue\",\"help\",\"support\",\"return\",\"refund\"];\n\nvar hrKw = [\"job\",\"resume\",\"cv\",\"interview\",\"hiring\",\"recruit\",\"vacancy\",\n  \"application\",\"candidate\",\"onboarding\",\"employee\",\"payroll\",\n  \"leave\",\"vacation\",\"benefits\",\"insurance\",\"termination\",\n  \"resignation\",\"training\",\"internship\",\"salary\",\"compensation\",\n  \"workplace\",\"attendance\",\"career\"];\nvar hrSender = [\"hr@\",\"careers@\",\"recruiting@\",\"jobs@\",\"talent@\"];\nvar hrSubject = [\"job\",\"application\",\"resume\",\"interview\",\"hiring\",\"leave\",\"employee\"];\n\nvar finKw = [\"invoice\",\"payment\",\"billing\",\"account\",\"tax\",\"budget\",\n  \"expense\",\"reimbursement\",\"receipt\",\"financial\",\"audit\",\n  \"profit\",\"loss\",\"balance\",\"ledger\",\"accounting\",\"payable\",\n  \"receivable\",\"credit\",\"debit\",\"bank\",\"transfer\",\"fiscal\",\n  \"expenditure\",\"procurement\"];\nvar finSender = [\"finance@\",\"billing@\",\"accounts@\",\"accounting@\",\"payable@\"];\nvar finSubject = [\"invoice\",\"payment\",\"billing\",\"budget\",\"expense\",\"tax\",\"financial\"];\n\nvar opsKw = [\"logistics\",\"shipping\",\"warehouse\",\"inventory\",\n  \"delivery\",\"dispatch\",\"fleet\",\"maintenance\",\"equipment\",\n  \"facility\",\"production\",\"manufacturing\",\"safety\",\"compliance\",\n  \"regulation\",\"inspection\",\"schedule\",\"shift\",\"operations\",\n  \"stock\",\"fulfillment\",\"distribution\",\"transport\",\"freight\"];\nvar opsSender = [\"ops@\",\"operations@\",\"logistics@\",\"warehouse@\",\"shipping@\"];\nvar opsSubject = [\"shipping\",\"delivery\",\"inventory\",\"maintenance\",\"logistics\",\"warehouse\"];\n\nfunction scoreList(text, list) {\n  var s = 0;\n  var m = [];\n  for (var i = 0; i < list.length; i++) {\n    if (text.indexOf(list[i]) !== -1) { s = s + 1; m.push(list[i]); }\n  }\n  return { score: s, matched: m };\n}\n\nfunction scoreSender(addr, patterns) {\n  var s = 0;\n  var m = [];\n  for (var i = 0; i < patterns.length; i++) {\n    if (addr.indexOf(patterns[i]) !== -1) { s = s + 3; m.push(patterns[i]); }\n  }\n  return { score: s, matched: m };\n}\n\nfunction scoreSubject(subj, patterns) {\n  var s = 0;\n  var m = [];\n  for (var i = 0; i < patterns.length; i++) {\n    if (subj.indexOf(patterns[i]) !== -1) { s = s + 2; m.push(patterns[i]); }\n  }\n  return { score: s, matched: m };\n}\n\nvar departments = [\n  { name: \"Sales\", kw: salesKw, sp: salesSender, su: salesSubject },\n  { name: \"Customer Service\", kw: csKw, sp: csSender, su: csSubject },\n  { name: \"Human Resources\", kw: hrKw, sp: hrSender, su: hrSubject },\n  { name: \"Finance\", kw: finKw, sp: finSender, su: finSubject },\n  { name: \"Operations\", kw: opsKw, sp: opsSender, su: opsSubject }\n];\n\nvar scores = {};\nvar allMatched = {};\nvar maxScore = 0;\nvar bestDept = \"Unknown\";\n\nfor (var d = 0; d < departments.length; d++) {\n  var dept = departments[d];\n  var kwR = scoreList(fullText, dept.kw);\n  var spR = scoreSender(sender, dept.sp);\n  var suR = scoreSubject(subject, dept.su);\n  var total = kwR.score + spR.score + suR.score;\n  scores[dept.name] = total;\n  allMatched[dept.name] = kwR.matched.concat(spR.matched).concat(suR.matched);\n  if (total > maxScore) { maxScore = total; bestDept = dept.name; }\n}\n\nvar totalAll = 0;\nfor (var key in scores) { totalAll = totalAll + scores[key]; }\nvar confidence = 0;\nif (totalAll > 0) { confidence = Math.round((maxScore / totalAll) * 100); }\n\nvar needsAI = (maxScore < 3) || (confidence < 50);\n\nreturn {\n  json: {\n    messageId: item.messageId,\n    threadId: item.threadId,\n    sender: item.sender,\n    senderName: item.senderName,\n    subject: item.subject,\n    body: item.body,\n    fullText: item.fullText,\n    receivedAt: item.receivedAt,\n    ruleResult: {\n      department: maxScore > 0 ? bestDept : \"Unknown\",\n      confidence: confidence,\n      maxScore: maxScore,\n      scores: scores,\n      matched: allMatched[bestDept] || [],\n      needsAI: needsAI\n    }\n  }\n};\n"
+      },
+      "id": "n4",
+      "name": "Rule Classifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if1",
+              "leftValue": "={{ $json.ruleResult.needsAI }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "n5",
+      "name": "Rules Confident?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "var item = $input.item.json;\n\nvar prompt = \"Classify this email into EXACTLY ONE department.\\n\\n\";\nprompt += \"Departments:\\n\";\nprompt += \"1. Sales - buying, purchasing, pricing, quotes, orders, deals, proposals\\n\";\nprompt += \"2. Customer Service - complaints, issues, refunds, returns, support\\n\";\nprompt += \"3. Human Resources - jobs, resumes, interviews, hiring, leave, salary\\n\";\nprompt += \"4. Finance - invoices, payments, billing, budgets, expenses, tax\\n\";\nprompt += \"5. Operations - shipping, logistics, warehouse, inventory, maintenance\\n\";\nprompt += \"6. Other - does not fit any department above\\n\\n\";\nprompt += \"EMAIL:\\n\";\nprompt += \"From: \" + item.sender + \"\\n\";\nprompt += \"Subject: \" + item.subject + \"\\n\";\nprompt += \"Body: \" + item.body.substring(0, 2000) + \"\\n\\n\";\nprompt += \"RESPOND WITH ONLY THIS JSON AND NOTHING ELSE:\\n\";\nprompt += '{\"department\":\"DEPARTMENT_NAME\",\"confidence\":85,\"reason\":\"brief explanation\"}';\n\nreturn {\n  json: {\n    messageId: item.messageId,\n    threadId: item.threadId,\n    sender: item.sender,\n    senderName: item.senderName,\n    subject: item.subject,\n    body: item.body,\n    receivedAt: item.receivedAt,\n    groqBody: {\n      model: \"llama-3.1-8b-instant\",\n      messages: [\n        {\n          role: \"user\",\n          content: prompt\n        }\n      ],\n      temperature: 0.1,\n      max_tokens: 150\n    }\n  }\n};\n"
+      },
+      "id": "n6",
+      "name": "Build AI Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer PASTE_YOUR_GROQ_API_KEY_HERE"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.groqBody) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "n7",
+      "name": "Groq AI Classify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "var item = $input.item.json;\nvar department = \"Other\";\nvar confidence = 0;\nvar reason = \"Could not parse response\";\n\ntry {\n  var rawText = \"\";\n\n  if (item.choices && item.choices[0] && item.choices[0].message) {\n    rawText = item.choices[0].message.content || \"\";\n  }\n\n  rawText = rawText.replace(/```json/g, \"\");\n  rawText = rawText.replace(/```/g, \"\");\n  rawText = rawText.trim();\n\n  var parsed = JSON.parse(rawText);\n  department = parsed.department || \"Other\";\n  confidence = parsed.confidence || 0;\n  reason = parsed.reason || \"\";\n} catch (e) {\n  department = \"Other\";\n  confidence = 0;\n  reason = \"Parse error\";\n}\n\nvar validDepts = [\"Sales\",\"Customer Service\",\"Human Resources\",\"Finance\",\"Operations\",\"Other\"];\nvar isValid = false;\nfor (var i = 0; i < validDepts.length; i++) {\n  if (validDepts[i] === department) { isValid = true; }\n}\nif (!isValid) { department = \"Other\"; }\n\n// FIXED: Pull original email data from the Build AI Request node\nvar buildNode = $(\"Build AI Request\").item.json;\n\nreturn {\n  json: {\n    messageId: buildNode.messageId || \"\",\n    threadId: buildNode.threadId || \"\",\n    sender: buildNode.sender || \"\",\n    senderName: buildNode.senderName || \"\",\n    subject: buildNode.subject || \"\",\n    body: buildNode.body || \"\",\n    receivedAt: buildNode.receivedAt || \"\",\n    classification: {\n      department: department,\n      confidence: confidence,\n      method: \"AI (Groq - Llama 3.1)\",\n      reason: reason\n    }\n  }\n};\n"
+      },
+      "id": "n8",
+      "name": "Parse AI Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "var item = $input.item.json;\n\nreturn {\n  json: {\n    messageId: item.messageId,\n    threadId: item.threadId,\n    sender: item.sender,\n    senderName: item.senderName,\n    subject: item.subject,\n    body: item.body,\n    receivedAt: item.receivedAt,\n    classification: {\n      department: item.ruleResult.department,\n      confidence: item.ruleResult.confidence,\n      method: \"Rule-Based (Keywords)\",\n      reason: \"Matched: \" + item.ruleResult.matched.join(\", \")\n    }\n  }\n};\n"
+      },
+      "id": "n9",
+      "name": "Use Rule Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "n10",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2100,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c1",
+                    "leftValue": "={{ $json.classification.department }}",
+                    "rightValue": "Sales",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Sales"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c2",
+                    "leftValue": "={{ $json.classification.department }}",
+                    "rightValue": "Customer Service",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Customer Service"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c3",
+                    "leftValue": "={{ $json.classification.department }}",
+                    "rightValue": "Human Resources",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Human Resources"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c4",
+                    "leftValue": "={{ $json.classification.department }}",
+                    "rightValue": "Finance",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Finance"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c5",
+                    "leftValue": "={{ $json.classification.department }}",
+                    "rightValue": "Operations",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Operations"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "n11",
+      "name": "Route by Department",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2360,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_SALES@example.com",
+        "subject": "=[Classified: Sales] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Sales\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f1",
+      "name": "Forward to Sales",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        180
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_CS@example.com",
+        "subject": "=[Classified: Customer Service] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Customer Service\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f2",
+      "name": "Forward to Customer Service",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        340
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_HR@example.com",
+        "subject": "=[Classified: Human Resources] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Human Resources\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f3",
+      "name": "Forward to HR",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        500
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_FINANCE@example.com",
+        "subject": "=[Classified: Finance] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Finance\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f4",
+      "name": "Forward to Finance",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        660
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_OPS@example.com",
+        "subject": "=[Classified: Operations] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Operations\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f5",
+      "name": "Forward to Operations",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        820
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "CHANGE_ME_ADMIN@example.com",
+        "subject": "=[Classified: Other / Unclassified] {{ $json.subject }}",
+        "message": "=AUTO-CLASSIFIED EMAIL\n\nDepartment: Other / Unclassified\nConfidence: {{ $json.classification.confidence }}%\nMethod: {{ $json.classification.method }}\nReason: {{ $json.classification.reason }}\n\nOriginal Sender: {{ $json.sender }}\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}",
+        "options": {}
+      },
+      "id": "f6",
+      "name": "Forward to Admin (Other)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        980
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CHANGE_ME",
+          "name": "Gmail Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Clean Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Email": {
+      "main": [
+        [
+          {
+            "node": "Is Bounce?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Bounce?": {
+      "main": [
+        [
+          {
+            "node": "Skip Bounce",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rule Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Classifier": {
+      "main": [
+        [
+          {
+            "node": "Rules Confident?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rules Confident?": {
+      "main": [
+        [
+          {
+            "node": "Build AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Use Rule Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Request": {
+      "main": [
+        [
+          {
+            "node": "Groq AI Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq AI Classify": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Result": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Rule Result": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Route by Department",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Department": {
+      "main": [
+        [
+          {
+            "node": "Forward to Sales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forward to Customer Service",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forward to HR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forward to Finance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forward to Operations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Forward to Admin (Other)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
